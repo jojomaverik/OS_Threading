@@ -22,6 +22,14 @@
 #include "input.h"
 
 // TODO: Global variables: mutexes, data structures, etc...
+pthread_mutex_t intersection_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int lane_arrival_total[4][4] = { {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0} };
+static int processed_count[4][4] = { {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0} };
+
+static int total_arrivals = sizeof(input_car_arrivals)/sizeof(Car_Arrival);
+static int total_processed = 0;
+
+
 
 /* 
  * curr_car_arrivals[][][]
@@ -54,7 +62,7 @@ static void* supply_cars()
   int num_curr_arrivals[4][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}};
 
   // for every arrival in the list
-  for (int i = 0; i < sizeof(input_car_arrivals)/sizeof(Car_Arrival); i++)
+  for (int i = 0; i < total_arrivals; i++)
   {
     // get the next arrival in the list
     Car_Arrival arrival = input_car_arrivals[i];
@@ -64,6 +72,8 @@ static void* supply_cars()
     // store the new arrival in curr_arrivals
     curr_car_arrivals[arrival.side][arrival.direction][num_curr_arrivals[arrival.side][arrival.direction]] = arrival;
     num_curr_arrivals[arrival.side][arrival.direction] += 1;
+    lane_arrival_total[arrival.side][arrival.direction]++;
+
     // increment the semaphore for the traffic light that the arrival is for
     sem_post(&car_sem[arrival.side][arrival.direction]);
   }
@@ -87,6 +97,7 @@ static void* manage_light(void* arg)
   //  - sleep for CROSS_TIME seconds
   //  - make the traffic light turn red
   //  - unlock the right mutex(es)
+  
 
   return(0);
 }
