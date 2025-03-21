@@ -29,6 +29,9 @@ static int processed_count[4][4] = { {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {
 static int total_arrivals = sizeof(input_car_arrivals)/sizeof(Car_Arrival);
 static int total_processed = 0;
 
+// Global variable to hold [side, direction] for each lights thread
+int lane_args[4][4][2]; 
+
 
 
 /* 
@@ -89,6 +92,13 @@ static void* supply_cars()
  */
 static void* manage_light(void* arg)
 {
+  int count;
+
+  int side = ((int*)arg)[0];
+  int direction = ((int*)arg)[1];
+
+  printf("helo");
+
   // TODO:
   // while not all arrivals have been handled, repeatedly:
   //  - wait for an arrival using the semaphore for this traffic light
@@ -118,6 +128,18 @@ int main(int argc, char * argv[])
   start_time();
   
   // TODO: create a thread per traffic light that executes manage_light
+  pthread_t lights[10][4][4];
+  
+  for (int i = 0; i < 10; i++){
+    for (int side = 0; side < 4; side++) {
+      for (int direction = 0; direction < 4; direction++) {
+        lane_args[side][direction][0] = side;
+        lane_args[side][direction][1] = direction;
+        pthread_create(&lights[i][side][direction], NULL, manage_light, lane_args[side][direction]);
+      }
+    }
+  }
+
 
   // TODO: create a thread that executes supply_cars()
 
