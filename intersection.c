@@ -24,7 +24,6 @@ typedef struct {
   int direction;
 } TrafficLightArgs;
 
-static int total_processed = 0;
 pthread_mutex_t count_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /*
@@ -87,7 +86,6 @@ static void* manage_light(void* arg)
         pthread_mutex_unlock(&intersection_mutex);
         
         pthread_mutex_lock(&count_mutex);
-        total_processed++;
         pthread_mutex_unlock(&count_mutex);
     }
     return (0);
