@@ -1,3 +1,13 @@
+/*
+ * Operating Systems (2INC0) Practical Assignment
+ * Threading
+ *
+ * Intersection Part 2
+ * 
+ * Ersoy Baki (1971131)
+ * Arda Bizel (1937901)
+ * Isik Ali Akpinar (1959425)
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -11,103 +21,117 @@
 #include "intersection_time.h"      
 #include "input.h"                
 
-// Global simulation start time (make sure it's accessible; you may need to declare it extern in intersection_time.h)
+//  TODO: Global variables: mutexes, data structures, etc...
 extern struct timespec begin_time;
 
-static Car_Arrival curr_car_arrivals[4][4][20];
+// Initialize semaphores for all lanes and mutexes
 static sem_t car_sem[4][4];
-
-// Array of zones, thread
-#define NUM_ZONES 7
-pthread_mutex_t zone_mutex[NUM_ZONES];
+pthread_mutex_t count_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int processed_count[4][4] = { {0} };
 
+// Array of zones of intersections
+#define NUM_ZONES 7
+pthread_mutex_t zone_mutex[NUM_ZONES];
+
+// Define traffic light as a struct
 typedef struct {
   int side;
   int direction;
 } TrafficLightArgs;
 
-pthread_mutex_t count_mutex = PTHREAD_MUTEX_INITIALIZER;
+/* 
+ * curr_car_arrivals[][][]
+ *
+ * A 3D array that stores the arrivals that have occurred
+ * The first two indices determine the entry lane: first index is Side, second index is Direction
+ * curr_arrivals[s][d] returns an array of all arrivals for the entry lane on side s for direction d,
+ *   ordered in the same order as they arrived
+ */
+static Car_Arrival curr_car_arrivals[4][4][20];
+
+
 
 /*
  * supply_cars()
  *
- * (No changes here.)
+ * A function for supplying car arrivals to the intersection
+ * This should be executed by a separate thread
  */
 static void* supply_cars()
 {
   int t = 0;
   int num_curr_arrivals[4][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}};
+    // for every arrival in the list
   for (int i = 0; i < sizeof(input_car_arrivals) / sizeof(Car_Arrival); i++)
   {
+    // get the next arrival in the list
     Car_Arrival arrival = input_car_arrivals[i];
-    // printf("Car Arrival: Side: %d, Direction: %d, Time: %d\n",
-    //       arrival.side, arrival.direction, arrival.time);
+    // wait until this arrival is supposed to arrive
     sleep(arrival.time - t);
     t = arrival.time;
+    // store the new arrival in curr_arrivals
     curr_car_arrivals[arrival.side][arrival.direction][num_curr_arrivals[arrival.side][arrival.direction]] = arrival;
-    num_curr_arrivals[arrival.side][arrival.direction]++;
+    num_curr_arrivals[arrival.side][arrival.direction] += 1;
+    // increment the semaphore for the traffic light that the arrival is for
     sem_post(&car_sem[arrival.side][arrival.direction]);
   }
   return (0);
 }
 
-/*
- * manage_light()
- *
- * Modified to use an absolute deadline equal to begin_time + END_TIME.
- */
-
-// Example lookup: Use -1 as a terminator.
+// An array of intersection zones for each traffic light and path
 static int path_zones[4][4][5] = {
-    // NORTH (side 0)
+    // NORTH - side 0
     {
-        /* LEFT  */ { /* zones for NORTH-LEFT, e.g.: */ -1, -1, -1, -1, -1 },
-        /* STRAIGHT */ { /* zones for NORTH-STRAIGHT, e.g.: */ -1, -1, -1, -1, -1 },
-        /* RIGHT */ { /* zones for NORTH-RIGHT, e.g.: */ -1, -1, -1, -1, -1 },
-        /* UTURN */ { -1, -1, -1, -1, -1 }  
+        // directions, left, straight, right, u-turn in order, -1 if no intersection
+        {-1, -1, -1, -1, -1 },
+        {-1, -1, -1, -1, -1 },
+        {-1, -1, -1, -1, -1 },
+        {-1, -1, -1, -1, -1 }  
     },
-    // EAST (side 1)
+    // EAST - side 1
     {
-        /* LEFT  */ { 1, 2, 7, -1, -1 },
-        /* STRAIGHT */ { 3, 4, -1, -1, -1 },
-        /* RIGHT */ { 5, -1, -1, -1, -1 },
-        /* UTURN */ { -1, -1, -1, -1, -1 }
+        { 1, 2, 7, -1, -1 },
+        { 3, 4, -1, -1, -1 },
+        { 5, -1, -1, -1, -1 },
+        { -1, -1, -1, -1, -1 }
     },
-    // SOUTH (side 2)
+    // SOUTH - side 2
     {
-        /* LEFT  */ { 1, 4, -1, -1, -1 },
-        /* STRAIGHT */ { 2, 3, 5, -1, -1 },
-        /* RIGHT */ { 6, -1, -1, -1, -1 },
-        /* UTURN */ { 7, -1, -1, -1, -1 }  
+        { 1, 4, -1, -1, -1 },
+        { 2, 3, 5, -1, -1 },
+        { 6, -1, -1, -1, -1 },
+        { 7, -1, -1, -1, -1 }  
     },
-    // WEST (side 3)
+    // WEST - side 3
     {
-        /* LEFT  */ { 4, 3, 5, -1, -1 },
-        /* STRAIGHT */ { 1, 2, 6, -1, -1 },
-        /* RIGHT */ { 7, -1, -1, -1, -1 },
-        /* UTURN */ { -1, -1, -1, -1, -1 }
+        { 4, 3, 5, -1, -1 },
+        { 1, 2, 6, -1, -1 },
+        { 7, -1, -1, -1, -1 },
+        { -1, -1, -1, -1, -1 }
     }
 };
 
 
-
+/*
+ * manage_light(void* arg)
+ *
+ * A function that implements the behaviour of a traffic light
+ */
 static void* manage_light(void* arg)
 {
     int side = ((TrafficLightArgs*)arg)->side;
     int direction = ((TrafficLightArgs*)arg)->direction;
     
-    // Compute the absolute deadline: simulation start time + END_TIME.
+    // Calculate the deadline for the traffic light
     struct timespec deadline = begin_time;
     deadline.tv_sec += END_TIME;
-    // (We assume tv_nsec stays the same; if needed, adjust for carryover.)
+
     
     while (1)
     {
+        // Check for end time
         int sem_result = sem_timedwait(&car_sem[side][direction], &deadline);
         if (sem_result == -1 && errno == ETIMEDOUT) {
-            // printf("Time %d: Traffic light %d,%d: Simulation ended (timeout). Stopping.\n",
-            //       get_time_passed(), side, direction);
             break;
         }
         
@@ -115,12 +139,12 @@ static void* manage_light(void* arg)
         Car_Arrival arrival = curr_car_arrivals[side][direction][processed_count[side][direction]];
         processed_count[side][direction]++;
 
-        // Retrieve the zone list 
+        // Get the intersection zone list 
         int *zones_for_path = path_zones[side][direction];
         
         // Lock all zones according to zone list
         for (int i = 0; zones_for_path[i] != -1; i++) {
-            // Subtract 1 since your zones are 1-indexed.
+            // Subtract 1 since zones are 1-indexed.
             pthread_mutex_lock(&zone_mutex[zones_for_path[i] - 1]);
         }
             
@@ -130,37 +154,43 @@ static void* manage_light(void* arg)
         printf("traffic light %d %d turns red at time %d\n",
                 side, direction, get_time_passed());
         
-                // Unlock the zones 
+        // Unlock the zones 
         for (int i = 0; zones_for_path[i] != -1; i++) {
             pthread_mutex_unlock(&zone_mutex[zones_for_path[i] - 1]);
         }
     }
+
+    // TODO:
+    // while not all arrivals have been handled, repeatedly:
+    //  - wait for an arrival using the semaphore for this traffic light
+    //  - lock the right mutex(es)
+    //  - make the traffic light turn green
+    //  - sleep for CROSS_TIME seconds
+    //  - make the traffic light turn red
+    //  - unlock the right mutex(es)
     return (0);
 }
 
 int main(int argc, char * argv[])
 {
-  // Initialize semaphores for all lanes (4 sides, 4 directions)
+  // create semaphores to wait/signal for arrivals
   for (int i = 0; i < 4; i++) {
     for (int j = 0; j < 4; j++) {  
       sem_init(&car_sem[i][j], 0, 0);
     }
   }
 
-
-  // zone mutexes
+  // initalizing zone mutexes
   for (int i = 0; i < NUM_ZONES; i++) {
     pthread_mutex_init(&zone_mutex[i], NULL);
 }
 
-
-  start_time(); // This sets begin_time
+    // start the timer
+  start_time();
   
-
-  
-  // Create traffic light threads.
-  const int lights = 9;  // 9 regular traffic light threads
-  pthread_t threads[lights + 1];  // +1 for u-turn
+  // TODO: create a thread per traffic light that executes manage_light
+  const int lights = 9;  
+  pthread_t threads[lights + 1];  
   TrafficLightArgs trafficLights[lights];
   
   // Create threads for 9 lights: sides 1,2,3 and directions 0,1,2.
@@ -173,7 +203,7 @@ int main(int argc, char * argv[])
       }
   }
   
-  // Create u-turn light thread (e.g., side 2, direction 3).
+  // Create u-turn light thread
   TrafficLightArgs uTurnLight;
   uTurnLight.side = 2;
   uTurnLight.direction = 3;
@@ -182,23 +212,23 @@ int main(int argc, char * argv[])
       exit(EXIT_FAILURE);
   }
   
-  // Create the supply_cars thread.
+  // TODO: create a thread that executes supply_cars()
   pthread_t supplier;
   pthread_create(&supplier, NULL, supply_cars, NULL);
   
   pthread_join(supplier, NULL);
   
-  // Wait for all traffic light threads to finish.
+    // TODO: wait for all threads to finish
   for (int i = 0; i < lights + 1; i++) {
       pthread_join(threads[i], NULL);
   }
 
-  // zone mutex destroy
+  // destroy intersection threads
     for (int i = 0; i < NUM_ZONES; i++) {
         pthread_mutex_destroy(&zone_mutex[i]);
     }
   
-  // Clean up semaphores.
+  // destroy semaphores
   for (int i = 0; i < 4; i++) {
       for (int j = 0; j < 4; j++) {
           sem_destroy(&car_sem[i][j]);
